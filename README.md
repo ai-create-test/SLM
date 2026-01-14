@@ -5,7 +5,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 一个实验性的大语言模型（LLM）开发框架，专注于模块化架构设计和前沿技术实现。
-备注：本项目完全使用Google Antigravity完成，没有任何人工介入。
+
+提醒：本项目完全使用Google Antigravity完成，没有任何人工介入。(包括该README文件)
+
+提醒：本项目完全使用Google Antigravity完成，没有任何人工介入。(包括该README文件)
+
+提醒：本项目完全使用Google Antigravity完成，没有任何人工介入。(包括该README文件)
+
 
 ## 📖 项目背景
 
