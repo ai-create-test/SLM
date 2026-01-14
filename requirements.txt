@@ -1,0 +1,44 @@
+# ============================================
+# LLM Experimental Project - Dependencies
+# ============================================
+
+# Core Dependencies
+numpy>=1.24.0
+regex>=2023.0.0
+
+# ============================================
+# Tokenization (工业级实现)
+# ============================================
+tiktoken>=0.5.0          # OpenAI's BPE tokenizer
+
+# ============================================
+# Deep Learning
+# ============================================
+torch>=2.0.0             # PyTorch for embeddings and neural networks
+
+# ============================================
+# Testing & Development
+# ============================================
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Type Checking
+mypy>=1.5.0
+
+# ============================================
+# Future Dependencies (暂未安装，后续按需添加)
+# ============================================
+# ML Framework
+# torch>=2.0.0
+# transformers>=4.35.0
+
+# Embedding & Retrieval
+# sentence-transformers>=2.2.0
+# faiss-cpu>=1.7.4
+
+# Web Search
+# httpx>=0.25.0
+# beautifulsoup4>=4.12.0
+
+# Graph Storage
+# networkx>=3.0
