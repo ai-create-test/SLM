@@ -25,11 +25,11 @@ from .act_controller import ACTController, ACTOutput, SimpleThinkingStep
 @dataclass
 class ReasoningOutput(ModuleOutput):
     """推理输出"""
-    predicted_latent: LatentVector    # 预测的下一个潜向量
-    reasoning_steps: int              # 实际推理步数
-    act_output: Optional[ACTOutput]   # ACT 详细输出
-    dynamics_output: DynamicsOutput   # 动力学模型输出
-    memory_used: Optional[List[int]]  # 使用的记忆索引
+    predicted_latent: LatentVector = None    # 预测的下一个潜向量
+    reasoning_steps: int = 0                 # 实际推理步数
+    act_output: Optional[ACTOutput] = None   # ACT 详细输出
+    dynamics_output: DynamicsOutput = None   # 动力学模型输出
+    memory_used: Optional[List[int]] = None  # 使用的记忆索引
 
 
 @Registry.register("brain", "reasoning_loop")

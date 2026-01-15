@@ -15,7 +15,7 @@ Paragraph Encoder - 段落级语义编码器
     VQ Codebook → Discrete Latent Code [d_latent]
 """
 
-from typing import Optional, List, Union, Tuple
+from typing import Optional, List, Union, Tuple, Any
 from dataclasses import dataclass
 import torch
 import torch.nn as nn
@@ -25,14 +25,16 @@ from ..interfaces.base_module import BaseModule, ModuleOutput, LatentVector
 from ..interfaces.config import ModelConfig
 from ..interfaces.registry import Registry
 from .vq_codebook import VQCodebook, VQOutput
+from .tokenizer_wrapper import TokenizerWrapper, FallbackTokenizer, get_tokenizer, TokenizerOutput
+from .base_lm import BaseLM, FallbackLM, get_base_lm, LMOutput
 
 
 @dataclass
 class EncoderOutput(ModuleOutput):
     """编码器输出"""
-    latent: LatentVector             # 潜向量
-    vq_output: Optional[VQOutput]    # VQ 输出 (包含损失)
-    pooled: torch.Tensor             # 池化后的向量 (量化前)
+    latent: LatentVector = None          # 潜向量
+    vq_output: Optional[VQOutput] = None # VQ 输出 (包含损失)
+    pooled: torch.Tensor = None          # 池化后的向量 (量化前)
 
 
 class AttentionPooling(nn.Module):
@@ -156,6 +158,8 @@ class ParagraphEncoder(BaseModule):
         base_model_name: str = "bert-base-uncased",
         freeze_base: bool = True,
         dropout: float = 0.1,
+        max_length: int = 256,
+        tokenizer: Optional[Any] = None,
     ):
         """
         Args:
@@ -169,6 +173,8 @@ class ParagraphEncoder(BaseModule):
             base_model_name: 基础预训练模型名称
             freeze_base: 是否冻结基础模型
             dropout: Dropout 率
+            max_length: Tokenizer 最大长度
+            tokenizer: 可选的预加载 Tokenizer
         """
         super().__init__()
         
@@ -177,15 +183,36 @@ class ParagraphEncoder(BaseModule):
         self.use_vq = use_vq
         self.base_model_name = base_model_name
         self.freeze_base = freeze_base
+        self.max_length = max_length
+        
+        # ========== Tokenizer ==========
+        if tokenizer is not None:
+            self.tokenizer = tokenizer
+        else:
+            # 尝试加载 HuggingFace tokenizer，失败则使用备用
+            self.tokenizer = get_tokenizer(
+                model_name=base_model_name,
+                max_length=max_length,
+                fallback=True,
+            )
         
         # ========== 基础语言模型 ==========
-        # 注意：这里使用占位符，实际实现需要加载真实模型
-        # TODO: 集成 transformers 库加载预训练模型
-        self.base_model = self._create_base_model_placeholder(d_model)
+        # 使用真实的预训练模型
+        self.base_model = get_base_lm(
+            model_name=base_model_name,
+            freeze=freeze_base,
+            fallback=True,
+        )
         
-        if freeze_base:
-            for param in self.base_model.parameters():
-                param.requires_grad = False
+        # 确保 d_model 匹配
+        actual_d_model = getattr(self.base_model, 'd_model', d_model)
+        if actual_d_model != d_model:
+            # 如果预训练模型的维度不同，添加投影层
+            self.model_proj = nn.Linear(actual_d_model, d_model)
+            self._actual_d_model = actual_d_model
+        else:
+            self.model_proj = None
+            self._actual_d_model = d_model
         
         # ========== 池化层 ==========
         if pooling_type == "attention":
@@ -215,19 +242,15 @@ class ParagraphEncoder(BaseModule):
         else:
             self.vq_codebook = None
     
-    def _create_base_model_placeholder(self, d_model: int) -> nn.Module:
+    def get_base_model_info(self) -> dict:
         """
-        创建基础模型占位符
-        
-        实际部署时应替换为真实的预训练模型。
+        获取基础模型信息
         """
-        return nn.Sequential(
-            nn.Embedding(50000, d_model),  # 占位词嵌入
-            nn.TransformerEncoder(
-                nn.TransformerEncoderLayer(d_model, nhead=8, batch_first=True),
-                num_layers=2,
-            ),
-        )
+        return {
+            "model_name": getattr(self.base_model, 'model_name', 'unknown'),
+            "d_model": getattr(self.base_model, 'd_model', self.d_model),
+            "is_frozen": getattr(self.base_model, 'is_frozen', self.freeze_base),
+        }
     
     def forward(
         self,
@@ -249,24 +272,46 @@ class ParagraphEncoder(BaseModule):
             text = [text]
         
         if isinstance(text, list):
-            # TODO: 使用真实的 tokenizer
-            # 这里使用简单的占位逻辑
-            token_ids = self._tokenize_placeholder(text)
+            # 使用真实的 Tokenizer
+            tokenizer_output = self.tokenizer.encode_batch(text, max_length=self.max_length)
+            token_ids = tokenizer_output.input_ids.to(self.device)
+            if attention_mask is None:
+                attn_mask = tokenizer_output.attention_mask.to(self.device)
+            else:
+                attn_mask = attention_mask
         else:
             token_ids = text
+            attn_mask = attention_mask
         
         # 基础模型编码
         # [batch, seq_len, d_model]
-        hidden_states = self.base_model(token_ids)
+        lm_output = self.base_model(token_ids, attention_mask=attn_mask)
+        
+        # 提取 hidden states
+        if hasattr(lm_output, 'last_hidden_state'):
+            hidden_states = lm_output.last_hidden_state
+        else:
+            hidden_states = lm_output
+        
+        # 如果需要投影维度
+        if self.model_proj is not None:
+            hidden_states = self.model_proj(hidden_states)
+        
+        # 将 attention_mask 转换为 key_padding_mask 格式给池化层
+        if attn_mask is not None:
+            padding_mask = (attn_mask == 0)
+        else:
+            padding_mask = None
         
         # 池化
         if self.pooling is not None:
-            pooled = self.pooling(hidden_states, attention_mask)
+            pooled = self.pooling(hidden_states, padding_mask)
         else:
             # Mean pooling
-            if attention_mask is not None:
-                mask = attention_mask.unsqueeze(-1)
-                pooled = (hidden_states * mask).sum(dim=1) / mask.sum(dim=1)
+            if attn_mask is not None:
+                # attn_mask: 1 = real token, 0 = padding
+                mask = attn_mask.unsqueeze(-1).float()
+                pooled = (hidden_states * mask).sum(dim=1) / (mask.sum(dim=1) + 1e-8)
             else:
                 pooled = hidden_states.mean(dim=1)
         
@@ -297,20 +342,24 @@ class ParagraphEncoder(BaseModule):
             pooled=pooled,
         )
     
-    def _tokenize_placeholder(self, texts: List[str]) -> torch.Tensor:
+    def tokenize(self, texts: Union[str, List[str]]) -> TokenizerOutput:
         """
-        占位 tokenizer
+        对文本进行分词
         
-        实际实现应使用真实的 tokenizer。
+        Args:
+            texts: 单个文本或文本列表
+            
+        Returns:
+            TokenizerOutput 包含 input_ids 和 attention_mask
         """
-        # 简单地将字符转为 ASCII 码
-        max_len = 128
-        batch = []
-        for text in texts:
-            ids = [ord(c) % 50000 for c in text[:max_len]]
-            ids += [0] * (max_len - len(ids))  # padding
-            batch.append(ids)
-        return torch.tensor(batch, device=self.device)
+        if isinstance(texts, str):
+            texts = [texts]
+        return self.tokenizer.encode_batch(texts, max_length=self.max_length)
+    
+    @property
+    def vocab_size(self) -> int:
+        """获取词表大小"""
+        return self.tokenizer.vocab_size
     
     def encode_text(self, text: Union[str, List[str]]) -> LatentVector:
         """

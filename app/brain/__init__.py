@@ -6,12 +6,20 @@ Brain Package - 核心大脑模块
 - ACT 自适应计算时间
 - Halt Unit 停止决策
 - 思考循环协调
+- 情感调制 Mamba (新增)
 """
 
 from .dynamics_model import DynamicsModel, MambaBlock
 from .act_controller import ACTController
 from .halt_unit import HaltUnit
 from .reasoning_loop import ReasoningLoop
+from .modulated_mamba import (
+    ModulatedMambaBlock,
+    ModulatedMambaStack,
+    MultiConditionModulatedMamba,
+)
+from .modulated_dynamics import ModulatedDynamicsModel
+from .modulated_reasoning_loop import ModulatedReasoningLoop
 
 __all__ = [
     "DynamicsModel",
@@ -19,4 +27,11 @@ __all__ = [
     "ACTController",
     "HaltUnit",
     "ReasoningLoop",
+    # 新增：情感调制
+    "ModulatedMambaBlock",
+    "ModulatedMambaStack",
+    "MultiConditionModulatedMamba",
+    "ModulatedDynamicsModel",
+    "ModulatedReasoningLoop",
 ]
+

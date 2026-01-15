@@ -27,8 +27,8 @@ from ..interfaces.registry import Registry
 @dataclass
 class DynamicsOutput(ModuleOutput):
     """动力学模型输出"""
-    predicted_latent: torch.Tensor     # 预测的下一个潜向量 [batch, d_latent]
-    hidden_states: torch.Tensor        # 隐藏状态序列 [batch, seq_len, d_model]
+    predicted_latent: torch.Tensor = None     # 预测的下一个潜向量 [batch, d_latent]
+    hidden_states: torch.Tensor = None        # 隐藏状态序列 [batch, seq_len, d_model]
     final_state: Optional[torch.Tensor] = None  # 最终状态 (用于续写)
 
 

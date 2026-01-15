@@ -26,11 +26,11 @@ from .halt_unit import HaltUnit
 @dataclass
 class ACTOutput(ModuleOutput):
     """ACT 输出"""
-    final_state: torch.Tensor         # 最终状态 [batch, d_model]
-    num_steps: torch.Tensor           # 实际思考步数 [batch]
-    halt_probs: List[torch.Tensor]    # 每步的停止概率
-    remainders: torch.Tensor          # 剩余概率 (用于正则化)
-    ponder_cost: torch.Tensor         # 思考代价 (正则化损失)
+    final_state: torch.Tensor = None         # 最终状态 [batch, d_model]
+    num_steps: torch.Tensor = None           # 实际思考步数 [batch]
+    halt_probs: List[torch.Tensor] = None    # 每步的停止概率
+    remainders: torch.Tensor = None          # 剩余概率 (用于正则化)
+    ponder_cost: torch.Tensor = None         # 思考代价 (正则化损失)
 
 
 @Registry.register("brain", "act")
@@ -130,13 +130,13 @@ class ACTController(BaseModule):
             new_cumulative = cumulative_prob + halt_prob
             
             # 判断哪些样本应该停止
-            should_halt = (new_cumulative >= self.halt_threshold) & (~halted)
+            should_halt = (new_cumulative >= self.halt_threshold) & (~halted.unsqueeze(-1))
             
             # 计算权重
             # 对于继续的样本：使用 halt_prob
             # 对于停止的样本：使用剩余概率
             weight = torch.where(
-                should_halt.unsqueeze(-1).expand_as(halt_prob),
+                should_halt,  # 已经是 [batch, 1]
                 remainders,  # 停止时使用剩余概率
                 halt_prob,   # 继续时使用当前概率
             )

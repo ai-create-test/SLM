@@ -5,6 +5,7 @@
 # Core Dependencies
 numpy>=1.24.0
 regex>=2023.0.0
+pyyaml>=6.0             # For config file serialization
 
 # ============================================
 # Tokenization (工业级实现)
@@ -15,6 +16,12 @@ tiktoken>=0.5.0          # OpenAI's BPE tokenizer
 # Deep Learning
 # ============================================
 torch>=2.0.0             # PyTorch for embeddings and neural networks
+transformers>=4.35.0     # HuggingFace for tokenizers and pre-trained models
+
+# ============================================
+# Vector Search (Memory System)
+# ============================================
+faiss-cpu>=1.7.4         # FAISS for latent memory retrieval
 
 # ============================================
 # Testing & Development

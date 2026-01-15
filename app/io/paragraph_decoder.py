@@ -24,14 +24,15 @@ import torch.nn.functional as F
 from ..interfaces.base_module import BaseModule, ModuleOutput, LatentVector
 from ..interfaces.config import ModelConfig
 from ..interfaces.registry import Registry
+from .tokenizer_wrapper import get_tokenizer, FallbackTokenizer
 
 
 @dataclass
 class DecoderOutput(ModuleOutput):
     """解码器输出"""
-    text: Optional[List[str]]          # 生成的文本 (推理时)
-    logits: torch.Tensor               # 输出 logits [batch, seq_len, vocab_size]
-    loss: Optional[torch.Tensor]       # 损失 (训练时)
+    text: Optional[List[str]] = None     # 生成的文本 (推理时)
+    logits: torch.Tensor = None          # 输出 logits [batch, seq_len, vocab_size]
+    loss: Optional[torch.Tensor] = None  # 损失 (训练时)
 
 
 @Registry.register("decoder", "paragraph")
@@ -87,6 +88,14 @@ class ParagraphDecoder(BaseModule):
         self.vocab_size = vocab_size
         self.max_length = max_length
         
+        # ========== Tokenizer ==========
+        self.tokenizer = get_tokenizer(max_length=max_length, fallback=True)
+        
+        # ========== 特殊 Token IDs ==========
+        self.bos_id = getattr(self.tokenizer, 'bos_token_id', 2)
+        self.eos_id = getattr(self.tokenizer, 'eos_token_id', 3)
+        self.pad_id = getattr(self.tokenizer, 'pad_token_id', 0)
+        
         # ========== 潜向量投影 ==========
         self.latent_proj = nn.Sequential(
             nn.Linear(d_latent, d_model),
@@ -94,19 +103,21 @@ class ParagraphDecoder(BaseModule):
             nn.GELU(),
         )
         
+        # ========== 情感/场景条件投影 ==========
+        self.condition_proj = nn.Linear(d_model, d_model)  # 用于融合条件
+        
         # ========== Token 嵌入 ==========
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         
         # ========== 位置编码 ==========
         if use_rope:
-            self.position_encoding = None  # RoPE 在 attention 中应用
+            self.position_encoding = None
             self.use_rope = True
         else:
             self.position_encoding = self._create_sinusoidal_pe(max_length, d_model)
             self.use_rope = False
         
         # ========== Transformer 解码器 ==========
-        # 自注意力 + 交叉注意力 (对潜向量)
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=d_model,
             nhead=num_heads,
@@ -119,9 +130,6 @@ class ParagraphDecoder(BaseModule):
         # ========== 输出层 ==========
         self.output_norm = nn.LayerNorm(d_model)
         self.output_proj = nn.Linear(d_model, vocab_size, bias=False)
-        
-        # 权重绑定 (可选)
-        # self.output_proj.weight = self.token_embedding.weight
         
         # ========== Dropout ==========
         self.dropout = nn.Dropout(dropout)
@@ -292,17 +300,58 @@ class ParagraphDecoder(BaseModule):
         mask = mask.masked_fill(mask == 1, float('-inf'))
         return mask
     
-    def _decode_tokens_placeholder(self, token_ids: torch.Tensor) -> List[str]:
-        """
-        占位解码器
-        
-        实际实现应使用真实的 tokenizer。
-        """
+    def _decode_tokens(self, token_ids: torch.Tensor) -> List[str]:
+        """使用 tokenizer 解码 token IDs 到文本"""
         texts = []
         for ids in token_ids:
-            chars = [chr(int(i) % 128) for i in ids if i > 2]  # 跳过特殊 token
-            texts.append(''.join(chars))
+            # 过滤特殊 token
+            filtered = [int(i) for i in ids if i not in (self.bos_id, self.eos_id, self.pad_id)]
+            if hasattr(self.tokenizer, 'decode'):
+                text = self.tokenizer.decode(torch.tensor(filtered))
+            else:
+                # Fallback: 简单字符解码
+                text = ''.join(chr(i % 128) for i in filtered if 32 <= i % 128 < 127)
+            texts.append(text)
         return texts
+    
+    def _sample_token(
+        self,
+        logits: torch.Tensor,
+        temperature: float = 1.0,
+        top_p: float = 0.9,
+        top_k: int = 50,
+    ) -> torch.Tensor:
+        """从 logits 采样下一个 token"""
+        if temperature == 0:
+            # Greedy
+            return logits.argmax(dim=-1)
+        
+        # Temperature scaling
+        logits = logits / temperature
+        
+        # Top-K 过滤
+        if top_k > 0:
+            top_k = min(top_k, logits.size(-1))
+            values, _ = torch.topk(logits, top_k, dim=-1)
+            min_value = values[:, :, -1:]
+            logits = torch.where(logits < min_value, torch.full_like(logits, float('-inf')), logits)
+        
+        # Top-P (nucleus) 过滤
+        if top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+            cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+            
+            sorted_mask = cumulative_probs > top_p
+            sorted_mask[:, :, 1:] = sorted_mask[:, :, :-1].clone()
+            sorted_mask[:, :, 0] = False
+            
+            indices_to_remove = sorted_mask.scatter(-1, sorted_indices, sorted_mask)
+            logits = logits.masked_fill(indices_to_remove, float('-inf'))
+        
+        # 采样
+        probs = F.softmax(logits, dim=-1)
+        next_token = torch.multinomial(probs.view(-1, probs.size(-1)), num_samples=1)
+        return next_token.view(probs.size(0), probs.size(1))
     
     def generate(
         self,
@@ -317,18 +366,78 @@ class ParagraphDecoder(BaseModule):
         """
         生成文本
         
-        支持更多采样参数。
+        Args:
+            latent: 潜向量 [batch, d_latent]
+            max_length: 最大生成长度
+            temperature: 采样温度 (0=greedy, 1=standard)
+            top_p: nucleus 采样阈值
+            top_k: top-k 采样
+            emotion: 情感向量
+            scene: 场景向量
         """
-        if max_length is not None:
-            old_max = self.max_length
-            self.max_length = max_length
+        # 处理潜向量
+        if isinstance(latent, LatentVector):
+            z = latent.vector
+        else:
+            z = latent
         
-        output = self.forward(latent, emotion=emotion, scene=scene)
+        if z.dim() == 1:
+            z = z.unsqueeze(0)
         
-        if max_length is not None:
-            self.max_length = old_max
+        batch_size = z.shape[0]
+        device = z.device
+        gen_max = max_length or self.max_length
         
-        return output
+        # 投影潜向量
+        memory = self.latent_proj(z).unsqueeze(1)  # [batch, 1, d_model]
+        
+        # 初始化生成序列 (BOS token)
+        generated = torch.full((batch_size, 1), self.bos_id, dtype=torch.long, device=device)
+        all_logits = []
+        
+        for step in range(gen_max - 1):
+            # Token 嵌入
+            token_emb = self.token_embedding(generated)
+            
+            # 位置编码
+            if self.position_encoding is not None:
+                seq_len = generated.shape[1]
+                token_emb = token_emb + self.position_encoding[:, :seq_len, :]
+            
+            # 因果掩码
+            causal_mask = self._generate_causal_mask(generated.shape[1], device)
+            
+            # Transformer 解码
+            hidden = self.decoder(
+                tgt=token_emb,
+                memory=memory,
+                tgt_mask=causal_mask,
+            )
+            
+            hidden = self.output_norm(hidden)
+            logits = self.output_proj(hidden[:, -1:, :])  # [batch, 1, vocab_size]
+            all_logits.append(logits)
+            
+            # 采样下一个 token
+            next_token = self._sample_token(logits, temperature, top_p, top_k)
+            generated = torch.cat([generated, next_token], dim=1)
+            
+            # 检查 EOS
+            if (next_token == self.eos_id).all():
+                break
+        
+        # 拼接 logits
+        full_logits = torch.cat(all_logits, dim=1) if all_logits else torch.zeros(batch_size, 0, self.vocab_size, device=device)
+        
+        # 解码为文本
+        texts = self._decode_tokens(generated)
+        
+        return DecoderOutput(
+            data=generated,
+            text=texts,
+            logits=full_logits,
+            loss=None,
+        )
     
     @classmethod
     def from_config(cls, config: ModelConfig, **kwargs) -> "ParagraphDecoder":
