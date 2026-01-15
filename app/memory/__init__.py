@@ -1,88 +1,35 @@
 """
-Memory Module - 语义嵌入与长文本处理
+Memory Package - 记忆系统 (重构版)
 
-核心功能:
-1. 长文本分块处理 (TextChunker)
-2. Token嵌入与位置编码 (TokenEmbedding + RoPE)
-3. 统一编码入口 (MemoryEncoder)
-4. 上下文融合 - 情感/场景注入 (ContextFusion)
-
-导出类:
-- TextChunker: 文本分块器
-- TokenAwareChunker: Token感知分块器
-- TextChunk: 文本块数据结构
-- CombinedEmbedding: 组合嵌入层
-- MemoryEncoder: 整合编码器
-- create_memory_encoder: 预配置工厂函数
-- ContextAwareEmbedding: 上下文感知嵌入层
-- ContextFusion: 门控融合层
+潜变量记忆与检索：
+- 潜变量记忆库 (FAISS 索引)
+- 问题导向检索
+- Cross-Attention 融合
+- 类图结构存储
 """
 
-from .text_chunker import (
-    TextChunker,
-    TokenAwareChunker,
-    TextChunk,
-    ChunkConfig,
-    ChunkStrategy,
-    BaseChunker,
-)
+from .latent_memory_bank import LatentMemoryBank, MemoryConfig
+from .query_retriever import QueryRetriever
+from .cross_attention_fuser import CrossAttentionFuser
+from .graph_memory import GraphMemory, GraphNode, GraphEdge
 
-from .embeddings import (
-    TokenEmbedding,
-    PositionalEncoding,
-    RotaryPositionalEmbedding,
-    CombinedEmbedding,
-    EmbeddingConfig,
-)
-
-from .memory_encoder import (
-    MemoryEncoder,
-    EncodingResult,
-    create_memory_encoder,
-)
-
-from .fusion import (
-    EmotionEmbedding,
-    SceneEmbedding,
-    ContextFusion,
-    ContextAwareEmbedding,
-    RMSNorm,
-    FusionConfig,
-    create_context_aware_embedding,
-    EMOTION_IDS,
-    SCENE_IDS,
-)
-
+# 保留原有的兼容导入
+from .embeddings import TokenEmbedding, RotaryPositionalEmbedding, CombinedEmbedding
+from .text_chunker import TextChunker, TextChunk
 
 __all__ = [
-    # 分块
-    "TextChunker",
-    "TokenAwareChunker",
-    "TextChunk",
-    "ChunkConfig",
-    "ChunkStrategy",
-    "BaseChunker",
-    # 嵌入
+    # 新的记忆系统
+    "LatentMemoryBank",
+    "MemoryConfig",
+    "QueryRetriever",
+    "CrossAttentionFuser",
+    "GraphMemory",
+    "GraphNode",
+    "GraphEdge",
+    # 保留的原有组件
     "TokenEmbedding",
-    "PositionalEncoding",
     "RotaryPositionalEmbedding",
     "CombinedEmbedding",
-    "EmbeddingConfig",
-    # 编码器
-    "MemoryEncoder",
-    "EncodingResult",
-    "create_memory_encoder",
-    # 上下文融合
-    "EmotionEmbedding",
-    "SceneEmbedding",
-    "ContextFusion",
-    "ContextAwareEmbedding",
-    "RMSNorm",
-    "FusionConfig",
-    "create_context_aware_embedding",
-    "EMOTION_IDS",
-    "SCENE_IDS",
+    "TextChunker",
+    "TextChunk",
 ]
-
-__version__ = "0.2.0"
-
