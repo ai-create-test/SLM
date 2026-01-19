@@ -91,8 +91,9 @@ class MambaBlock(nn.Module):
         self.x_proj = nn.Linear(self.d_inner, d_state * 2 + 1, bias=False)
         
         # 可学习的 A 参数 (对数空间)
+        # NOTE: 使用 clone() 确保实际内存拷贝，避免 expand() 导致的内存别名问题
         A = torch.arange(1, d_state + 1, dtype=torch.float32)
-        self.A_log = nn.Parameter(torch.log(A).unsqueeze(0).expand(self.d_inner, -1))
+        self.A_log = nn.Parameter(torch.log(A).unsqueeze(0).expand(self.d_inner, -1).clone())
         
         # D 参数 (跳跃连接)
         self.D = nn.Parameter(torch.ones(self.d_inner))

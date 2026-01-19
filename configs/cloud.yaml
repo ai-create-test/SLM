@@ -1,0 +1,54 @@
+# NeuralFlow Cloud Training Configuration
+# 云训练模板配置
+
+name: neuralflow-cloud
+version: "2.0.0"
+description: "Cloud training configuration template"
+
+# 继承基础配置
+inherit: base
+
+# 云训练专用配置
+cloud:
+  # 平台选择: runpod | modal | lambda
+  provider: runpod
+  
+  # 计算资源
+  gpu_type: RTX4090
+  gpu_count: 1
+  cpu_count: 4
+  memory_gb: 32
+  disk_gb: 100
+  region: EU-CZ-1
+  
+  # 认证 (从环境变量读取)
+  api_key: ${RUNPOD_API_KEY}
+  
+  # 任务设置
+  max_hours: 8.0
+  auto_terminate: true
+  
+  # 容器环境
+  docker_image: runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel
+  pip_requirements:
+    - safetensors
+    - pyyaml
+    - faiss-cpu
+    - tiktoken
+  
+  # 数据同步
+  data_source: local
+  output_destination: local
+  sync_checkpoints: true
+  sync_interval_minutes: 30
+
+# 云训练优化的训练参数
+training:
+  batch_size: 64
+  learning_rate: 0.0001
+  max_epochs: 100
+  
+  # 增加保存频率
+  save_every: 500
+  log_every: 50
+  eval_every: 250

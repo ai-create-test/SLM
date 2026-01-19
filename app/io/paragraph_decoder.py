@@ -285,7 +285,7 @@ class ParagraphDecoder(BaseModule):
         full_logits = torch.cat(all_logits, dim=1)
         
         # 解码为文本 (占位)
-        text = self._decode_tokens_placeholder(generated)
+        text = self._decode_tokens(generated)
         
         return DecoderOutput(
             data=generated,

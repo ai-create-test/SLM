@@ -6,12 +6,14 @@ Memory Package - 记忆系统 (重构版)
 - 问题导向检索
 - Cross-Attention 融合
 - 类图结构存储
+- GraphRAG 检索
 """
 
 from .latent_memory_bank import LatentMemoryBank, MemoryConfig
 from .query_retriever import QueryRetriever
 from .cross_attention_fuser import CrossAttentionFuser
 from .graph_memory import GraphMemory, GraphNode, GraphEdge
+from .rag_bridge import RAGRetriever, RAGConfig
 
 # 保留原有的兼容导入
 from .embeddings import TokenEmbedding, RotaryPositionalEmbedding, CombinedEmbedding
@@ -26,6 +28,9 @@ __all__ = [
     "GraphMemory",
     "GraphNode",
     "GraphEdge",
+    # GraphRAG
+    "RAGRetriever",
+    "RAGConfig",
     # 保留的原有组件
     "TokenEmbedding",
     "RotaryPositionalEmbedding",
@@ -33,3 +38,4 @@ __all__ = [
     "TextChunker",
     "TextChunk",
 ]
+

@@ -1,0 +1,44 @@
+# NeuralFlow Tiny Configuration
+# 用于快速调试，参数量最小
+
+name: neuralflow-tiny
+version: "2.0.0"
+description: "Tiny model for debugging"
+
+model:
+  d_latent: 128
+  d_model: 256
+  d_state: 32
+  d_emotion: 64
+  d_scene: 64
+  
+  codebook_size: 1024
+  num_codebooks: 2
+  
+  brain_type: mamba
+  num_layers: 2
+  expand: 2
+  d_conv: 4
+  
+  max_think_steps: 5
+  max_paragraph_len: 128
+  dropout: 0.1
+
+training:
+  batch_size: 8
+  learning_rate: 0.0002
+  weight_decay: 0.01
+  max_epochs: 5
+  warmup_steps: 100
+  gradient_clip: 1.0
+  
+  save_every: 500
+  log_every: 50
+  eval_every: 200
+
+pipeline:
+  enable_memory: false
+  enable_emotion: true
+  enable_scene: false
+  enable_search: false
+  enable_reflection: false

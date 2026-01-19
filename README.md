@@ -1,245 +1,231 @@
-# NeuralFlow - 前沿 LLM 架构实验框架
+# NeuralFlow - 段落级语义推理 LLM 架构框架
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 2.0+](https://img.shields.io/badge/pytorch-2.0+-red.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-一个实现段落级语义推理的下一代 LLM 架构框架。
+> **实验性项目** - 探索段落级语义推理的下一代 LLM 架构
 
-重要提醒：本项目完全使用Google Antigravity完成，没有任何人工介入。(包括该README文件)
+重要提醒：本项目完全使用Google Antigravity完成(包括该README文件)。
 
 ## 🌟 核心理念
 
-本框架探索了一种与传统 Token-by-Token 预测不同的 LLM 设计范式：
+NeuralFlow 实现了一种与传统 Token-by-Token 预测不同的 LLM 设计范式：
 
-```
-传统 LLM:   Token → Token → Token → ... (离散序列)
-NeuralFlow: Paragraph → LatentSpace → Dynamics → Paragraph (连续语义空间)
-```
+| 传统 LLM | NeuralFlow |
+|----------|------------|
+| Token → Token → Token (离散序列) | Paragraph → Latent → Dynamics → Paragraph |
+| 线性自回归生成 | 连续语义空间推理 |
+| 固定计算量 | 自适应思考时间 (ACT) |
 
 ### 设计哲学
 
 1. **段落级思考** - 模型在抽象语义空间规划，而非逐字生成
-2. **离散压缩** - 使用 VQ-VAE 将段落压缩为离散码本索引
-3. **动态推理** - Mamba SSM 作为核心动力学系统预测下一步
-4. **自适应思考** - ACT 机制实现简单问题快答、复杂问题深思
-5. **深度调制** - AdaLN 让情感/场景深度影响每层计算
+2. **VQ-VAE 离散压缩** - 将段落压缩为离散码本索引
+3. **Mamba SSM 动力学** - 线性复杂度的状态空间模型预测下一步
+4. **自适应计算时间 (ACT)** - 简单问题快答，复杂问题深思
+5. **深度情感调制 (AdaLN)** - 情感/场景深度影响每层计算
 
-## 🏗️ 架构概览
+## 🏗️ 架构
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        NeuralFlow Pipeline                        │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐          │
-│  │    IO       │ => │    Brain    │ => │  Decoder    │          │
-│  │  (VQ-VAE)   │    │(Mamba+ACT)  │    │ (生成文本)  │          │
-│  └─────────────┘    └─────────────┘    └─────────────┘          │
-│        ↑                  ↑ ↓                                     │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐          │
-│  │  Modulation │    │   Memory    │    │ Reflection  │          │
-│  │(AdaLN/FiLM) │    │(FAISS/Graph)│    │ (回溯/评价) │          │
-│  └─────────────┘    └─────────────┘    └─────────────┘          │
-│                           ↑                                       │
-│                    ┌─────────────┐                               │
-│                    │   Search    │                               │
-│                    │  (联网检索)  │                               │
-│                    └─────────────┘                               │
-│                                                                   │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                      NeuralFlow Model                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
+│  │   Encoder    │ => │   Dynamics   │ => │   Decoder    │   │
+│  │   (VQ-VAE)   │    │ (Mamba+ACT)  │    │  (生成文本)   │   │
+│  └──────────────┘    └──────────────┘    └──────────────┘   │
+│         ↑                   ↑                    ↑           │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
+│  │  Modulation  │    │    Memory    │    │   Emotion    │   │
+│  │ (AdaLN/FiLM) │    │ (FAISS+Graph)│    │   Encoder    │   │
+│  └──────────────┘    └──────────────┘    └──────────────┘   │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## 📦 安装
+
+```bash
+# 克隆项目
+git clone https://github.com/your-username/neuralflow.git
+cd neuralflow
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 可选: GPU 加速
+pip install faiss-gpu mamba-ssm
+```
+## 📚 文档
+
+| 文档 | 说明 |
+|------|------|
+| [**新手入门指南**](docs/QUICKSTART.md) | 🌟 第一次使用？从这里开始！ |
+| [训练指南](docs/TRAINING.md) | 数据格式、配置、训练阶段详解 |
+
+## 🚀 快速开始
+
+### 使用预设配置
+
+```python
+from app.model import NeuralFlowModel
+from app.interfaces import Config
+
+# 创建模型 (small: 228M 参数)
+model = NeuralFlowModel.from_preset("small")
+
+# 或从配置文件加载
+config = Config.load("configs/base.yaml")
+model = NeuralFlowModel(config)
+```
+
+### 训练模型
+
+```bash
+# 本地训练
+python scripts/train.py \
+    --config configs/base.yaml \
+    --data data/train.jsonl \
+    --stages vqvae dynamics \
+    --output outputs/my_model
+```
+
+### 云端训练 (RunPod/Modal/Lambda)
+
+```bash
+# 提交云训练任务
+python scripts/cloud_train.py submit \
+    --provider runpod \
+    --gpu RTX4090 \
+    --config configs/cloud.yaml
+
+# 查看成本估算
+python scripts/cloud_train.py estimate --gpu RTX4090 --hours 8
 ```
 
 ## 📁 项目结构
 
 ```
 app/
-├── interfaces/           # 统一接口定义
-│   ├── base_module.py   # BaseModule, LatentVector, MemoryItem
-│   ├── config.py        # ModelConfig, TrainingConfig, PipelineConfig
-│   └── registry.py      # 模块注册表
+├── interfaces/              # 统一接口和配置
+│   ├── config.py           # 分层配置 (Model/Training/Pipeline)
+│   ├── config_loader.py    # 增强配置加载器 (继承/环境变量/CLI覆盖)
+│   └── base_module.py      # BaseModule, LatentVector
 │
-├── io/                   # 输入/输出层
-│   ├── vq_codebook.py   # VQ-VAE 码本 (离散瓶颈层)
-│   ├── paragraph_encoder.py  # 段落 → 潜向量
-│   ├── paragraph_decoder.py  # 潜向量 → 段落
-│   └── semantic_segmenter.py # 语义分割
+├── io/                      # 输入/输出层
+│   ├── paragraph_encoder.py    # VQ-VAE 编码器
+│   ├── paragraph_decoder.py    # 自回归解码器
+│   └── vq_codebook.py          # 向量量化码本
 │
-├── brain/               # 核心大脑
-│   ├── dynamics_model.py    # Mamba SSM 动力学预测
-│   ├── act_controller.py    # 自适应计算时间
-│   ├── halt_unit.py         # 停止决策神经元
-│   └── reasoning_loop.py    # 推理循环协调器
+├── brain/                   # 核心推理
+│   ├── dynamics_model.py       # Mamba/GRU 动力学
+│   ├── act_controller.py       # 自适应计算时间
+│   └── reasoning_loop.py       # 推理循环
 │
-├── memory/              # 记忆系统
-│   ├── latent_memory_bank.py    # FAISS 潜向量库
-│   ├── query_retriever.py       # 问题导向检索
-│   ├── cross_attention_fuser.py # 记忆融合层
-│   └── graph_memory.py          # 类图结构存储
+├── memory/                  # 记忆系统
+│   ├── latent_memory_bank.py   # FAISS 向量存储
+│   └── graph_memory.py         # 知识图谱
 │
-├── modulation/          # 控制与调制
-│   ├── adaln.py         # 自适应层归一化 (深度情感注入)
-│   ├── film.py          # FiLM 调制层
-│   ├── emotion_encoder.py   # 情感编码器
-│   └── scene_encoder.py     # 场景编码器
+├── modulation/              # 控制调制
+│   ├── adaln.py                # AdaLN 层
+│   ├── emotion_encoder.py      # VAD 情感编码
+│   └── scene_encoder.py        # 场景编码
 │
-├── reflection/          # 自我回溯
-│   ├── trajectory_logger.py # 推理轨迹记录
-│   ├── backtracker.py       # 回溯执行器
-│   └── self_critic.py       # 自我评价
+├── training/                # 训练系统
+│   ├── unified_trainer.py      # 统一训练器
+│   ├── training_stages.py      # 4阶段训练 (VQ-VAE/Dynamics/Emotion/Finetune)
+│   └── data_pipeline.py        # 数据加载
 │
-├── search/              # 联网搜索
-│   ├── search_interface.py  # 搜索抽象接口
-│   ├── web_search.py        # Web 搜索实现
-│   ├── knowledge_injector.py # 知识注入器
-│   └── cache.py             # 搜索缓存
-│
-├── core/                # 保留的基础组件
-│   ├── bpe_tokenizer.py     # BPE Tokenizer
-│   └── tokenizer_factory.py # Tokenizer 工厂
-│
-└── pipeline.py          # 端到端流水线
+└── model/                   # 模型封装
+    └── neuralflow_model.py     # NeuralFlowModel 主类
+
+cloud/                       # 云训练支持
+├── providers/               # RunPod/Modal/Lambda 适配器
+├── job_manager.py           # 任务管理
+└── sync_utils.py            # 数据同步
+
+configs/                     # 配置文件
+├── base.yaml                # 基础配置
+├── cloud.yaml               # 云训练配置
+└── presets/                 # 快速预设 (tiny/small)
+
+scripts/                     # CLI 脚本
+├── train.py                 # 本地训练
+├── cloud_train.py           # 云训练
+├── evaluate.py              # 模型评估
+└── config_gen.py            # 配置生成器
 ```
 
-## 🚀 快速开始
+## 🔧 配置系统
 
-### 安装依赖
+### 分层配置
+```yaml
+# configs/base.yaml
+model:
+  d_latent: 512
+  d_model: 768
+  brain_type: mamba
+  codebook_size: 8192
 
+training:
+  batch_size: 32
+  learning_rate: 0.0001
+  max_epochs: 100
+
+pipeline:
+  enable_memory: true
+  enable_emotion: true
+```
+
+### 配置继承
+```yaml
+# configs/my_experiment.yaml
+inherit: base
+
+model:
+  d_latent: 256  # 覆盖父配置
+```
+
+### CLI 覆盖
 ```bash
-pip install torch numpy faiss-cpu pyyaml tiktoken
-# 可选: GPU 加速
-pip install faiss-gpu mamba-ssm
+python scripts/train.py \
+    --config configs/base.yaml \
+    --model.d_latent 256 \
+    --training.batch_size 64
 ```
 
-### 基础使用
+## 📊 训练阶段
 
-```python
-from app import NeuralFlowPipeline, Config
+| 阶段 | 说明 | 训练目标 |
+|------|------|----------|
+| **1. VQ-VAE** | 码本学习 | commitment + codebook loss |
+| **2. Dynamics** | 动力学预测 | 下一段落预测 + ponder cost |
+| **3. Emotion** | 情感调制 | 联合情感编码器训练 |
+| **4. Finetune** | 端到端微调 | 全模型低学习率微调 |
 
-# 从预设创建
-pipeline = NeuralFlowPipeline.from_preset("base")
+## ☁️ 云训练支持
 
-# 生成
-output = pipeline.generate(
-    "请解释量子计算的基本原理",
-    emotion="curious",
-    scene="teaching",
-)
-print(output.text)
-print(f"推理步数: {output.reasoning_steps}")
-```
+| 平台 | GPU | 价格参考 | 推荐场景 |
+|------|-----|----------|----------|
+| **RunPod** | RTX4090, A100, H100 | $0.34-1.99/hr | 长时间训练 |
+| **Modal** | T4, A100, H100 | 按秒计费 | 短任务/调试 |
+| **Lambda Labs** | A6000, A100, H100 | $0.80-2.99/hr | 正式训练 |
 
-### 自定义配置
-
-```python
-from app import Config, ModelConfig
-
-config = Config(
-    model=ModelConfig(
-        d_latent=512,
-        d_model=768,
-        brain_type="mamba",
-        max_think_steps=10,
-        codebook_size=8192,
-    )
-)
-
-pipeline = NeuralFlowPipeline.from_config(config)
-```
-
-## 🔬 核心技术
-
-### 1. VQ-VAE 语义压缩
-
-```python
-from app import ParagraphEncoder, VQCodebook
-
-encoder = ParagraphEncoder(d_model=768, d_latent=512, use_vq=True)
-output = encoder("这是一个测试段落...")
-
-z_quantized = output.latent.vector    # 量化后的潜向量
-indices = output.latent.codebook_indices  # 离散码本索引
-```
-
-### 2. Mamba 动力学模型
-
-```python
-from app import DynamicsModel
-
-model = DynamicsModel(
-    d_latent=512,
-    d_model=768,
-    brain_type="mamba",  # 或 "gru"
-)
-
-# 预测下一个潜向量
-z_history = torch.randn(batch, seq_len, 512)
-output = model(z_history)
-z_next = output.predicted_latent
-```
-
-### 3. 自适应计算时间 (ACT)
-
-```python
-from app import ACTController
-
-act = ACTController(d_model=768, max_steps=10)
-
-output = act(
-    initial_state=state,
-    step_fn=thinking_step,
-)
-print(f"实际思考步数: {output.num_steps}")
-```
-
-### 4. 深度情感调制 (AdaLN)
-
-```python
-from app import AdaptiveLayerNorm, EmotionEncoder
-
-emotion_enc = EmotionEncoder(d_emotion=128)
-adaln = AdaptiveLayerNorm(d_model=768, d_condition=128)
-
-emotion_vec = emotion_enc.encode_name("happy")
-x_modulated = adaln(x, emotion_vec)  # 情感深度影响计算
-```
-
-## 📊 开发进度
+## � 开发进度
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
 | interfaces/ | ✅ 完成 | 基类、配置、注册表 |
-| io/ | ✅ 骨架完成 | VQ-VAE, 编解码器 |
-| brain/ | ✅ 骨架完成 | Mamba, ACT |
-| memory/ | ✅ 骨架完成 | FAISS, Cross-Attention |
-| modulation/ | ✅ 骨架完成 | AdaLN, FiLM |
-| reflection/ | ✅ 骨架完成 | 轨迹记录, 回溯 |
-| search/ | ✅ 骨架完成 | Web 搜索, 缓存 |
-| pipeline.py | ✅ 骨架完成 | 端到端流水线 |
-| 训练代码 | 🔲 待开发 | DataLoader, Trainer |
-| 预训练权重 | 🔲 待开发 | 需要大规模训练 |
-
-## 🛣️ 后续计划
-
-### Phase 1: 核心实现 (当前)
-- [x] 模块骨架搭建
-- [ ] 单元测试覆盖
-- [ ] 集成测试
-
-### Phase 2: 功能完善
-- [ ] 真实 Tokenizer 集成
-- [ ] 训练循环实现
-- [ ] 损失函数设计
-
-### Phase 3: 训练验证
-- [ ] 小规模数据集验证
-- [ ] 消融实验
-- [ ] 性能调优
-
-### Phase 4: 扩展
-- [ ] 分布式训练支持
-- [ ] 多模态扩展
-- [ ] 推理优化
+| io/ | ✅ 完成 | VQ-VAE 编解码器 |
+| brain/ | ✅ 完成 | Mamba/GRU + ACT |
+| memory/ | ✅ 完成 | FAISS + GraphRAG |
+| modulation/ | ✅ 完成 | AdaLN + 情感编码 |
+| training/ | ✅ 完成 | 4阶段训练 + 分布式 |
+| cloud/ | ✅ 完成 | 3平台云训练支持 |
+| 预训练权重 | 🔲 待开发 | 需大规模训练 |
 
 ## 📚 参考文献
 
@@ -251,3 +237,7 @@ x_modulated = adaln(x, emotion_vec)  # 情感深度影响计算
 ## 📄 License
 
 MIT License
+
+---
+
+**注意**: 本项目完全使用 Google Antigravity AI 完成开发。

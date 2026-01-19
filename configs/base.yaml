@@ -1,0 +1,73 @@
+# NeuralFlow Base Configuration
+# 基础模型配置
+
+name: neuralflow-base
+version: "2.0.0"
+description: "NeuralFlow with standardized training"
+
+# 模型架构
+model:
+  # 维度配置
+  d_latent: 512
+  d_model: 768
+  d_state: 64
+  d_emotion: 128
+  d_scene: 128
+  
+  # VQ-VAE 配置
+  codebook_size: 8192
+  num_codebooks: 4
+  commitment_cost: 0.25
+  
+  # 核心大脑配置
+  brain_type: mamba
+  num_layers: 6
+  expand: 2
+  d_conv: 4
+  
+  # ACT 配置
+  max_think_steps: 10
+  halt_threshold: 0.99
+  ponder_cost: 0.01
+  
+  # 其他配置
+  vocab_size: 100000
+  max_paragraph_len: 256
+  dropout: 0.1
+
+# 训练配置
+training:
+  batch_size: 32
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  max_epochs: 100
+  warmup_steps: 1000
+  gradient_clip: 1.0
+  
+  # 损失权重
+  loss_weights:
+    reconstruction: 1.0
+    commitment: 0.25
+    prediction: 1.0
+    ponder: 0.01
+  
+  # 保存与日志
+  save_every: 1000
+  log_every: 100
+  eval_every: 500
+  checkpoint_dir: ./checkpoints
+  log_dir: ./logs
+
+# 流水线配置
+pipeline:
+  enable_memory: true
+  enable_emotion: true
+  enable_scene: true
+  enable_search: false
+  enable_reflection: false
+  
+  # 推理配置
+  inference_mode: sampling
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50

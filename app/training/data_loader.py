@@ -115,6 +115,43 @@ class ParagraphDataset(Dataset):
         return cls(paragraphs=paragraphs, **kwargs)
     
     @classmethod
+    def from_jsonl(
+        cls,
+        file_path: str,
+        text_field: str = "text",
+        encoding: str = "utf-8",
+        **kwargs,
+    ) -> "ParagraphDataset":
+        """
+        从 JSONL 文件加载数据集
+        
+        Args:
+            file_path: JSONL 文件路径
+            text_field: 文本字段名 (默认 "text")
+            encoding: 文件编码
+            
+        示例文件格式:
+            {"text": "第一个段落内容"}
+            {"text": "第二个段落内容"}
+        """
+        import json
+        
+        paragraphs = []
+        with open(file_path, "r", encoding=encoding) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    if text_field in data:
+                        paragraphs.append(data[text_field])
+                except json.JSONDecodeError:
+                    continue
+        
+        return cls(paragraphs=paragraphs, **kwargs)
+    
+    @classmethod
     def synthetic(
         cls,
         num_paragraphs: int = 1000,

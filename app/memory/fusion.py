@@ -29,15 +29,8 @@ from .embeddings import CombinedEmbedding
 # 常量定义
 # ============================================================================
 
-# 情感ID映射
-EMOTION_IDS: Dict[str, int] = {
-    "neutral": 0,
-    "happy": 1,
-    "sad": 2,
-    "angry": 3,
-    "afraid": 4,
-    "surprised": 5,
-}
+# 情感ID映射 (从 modulation 模块导入)
+from ..modulation import LEGACY_EMOTION_IDS as EMOTION_IDS
 
 # 场景ID映射
 SCENE_IDS: Dict[str, int] = {
@@ -84,57 +77,31 @@ class RMSNorm(nn.Module):
 
 class EmotionEmbedding(nn.Module):
     """
-    情感状态嵌入层
+    情感状态嵌入层 (兼容层)
     
-    将离散的情感ID转换为稠密向量。
-    
-    使用示例:
-        emotion_emb = EmotionEmbedding(d_model=768)
-        emotion_id = torch.tensor([3])  # Angry
-        vector = emotion_emb(emotion_id)  # [1, 768]
+    使用 SemanticEmotionEncoder 提供向后兼容的接口。
+    接受 d_model 参数以匹配旧 API。
     """
     
     def __init__(
         self,
         d_model: int,
-        num_emotions: int = 6,
-        init_std: float = 0.02,
+        num_emotions: int = 6,  # Ignored, kept for API compatibility
+        init_std: float = 0.02,  # Ignored
     ):
-        """
-        Args:
-            d_model: 嵌入维度 (必须与主模型一致)
-            num_emotions: 情感类别数
-            init_std: 权重初始化标准差
-        """
         super().__init__()
-        
-        self.d_model = d_model
-        self.num_emotions = num_emotions
-        
-        # 嵌入层
-        self.embedding = nn.Embedding(
-            num_embeddings=num_emotions,
-            embedding_dim=d_model,
-        )
-        
-        # 初始化权重
-        nn.init.normal_(self.embedding.weight, mean=0.0, std=init_std)
+        from ..modulation import SemanticEmotionEncoder
+        self._encoder = SemanticEmotionEncoder(d_emotion=d_model)
     
     def forward(self, emotion_id: torch.Tensor) -> torch.Tensor:
-        """
-        前向传播
-        
-        Args:
-            emotion_id: 情感ID [batch] 或 [batch, 1]
-            
-        Returns:
-            情感向量 [batch, d_model]
-        """
-        # 确保是1D张量
+        """编码情感 ID"""
         if emotion_id.dim() > 1:
             emotion_id = emotion_id.squeeze(-1)
-        
-        return self.embedding(emotion_id)
+        # Batch process
+        results = []
+        for eid in emotion_id:
+            results.append(self._encoder(int(eid.item())))
+        return torch.cat(results, dim=0)
     
     def get_emotion_name(self, emotion_id: int) -> str:
         """获取情感名称"""
@@ -411,6 +378,7 @@ class ContextAwareEmbedding(nn.Module):
         emotion_id: Optional[Union[torch.Tensor, int]] = None,
         scene_id: Optional[Union[torch.Tensor, int]] = None,
         position_ids: Optional[torch.Tensor] = None,
+        emotion_vector: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         前向传播
@@ -418,8 +386,11 @@ class ContextAwareEmbedding(nn.Module):
         Args:
             token_ids: Token ID [batch, seq_len]
             emotion_id: 情感ID (int 或 [batch] tensor)，默认0=Neutral
+                        如果提供了 emotion_vector，则忽略此参数
             scene_id: 场景ID (int 或 [batch] tensor)，默认0=Chat
             position_ids: 位置ID (可选)
+            emotion_vector: 直接提供的情感向量 [batch, d_model] (可选)
+                           支持 VADEncoder 或 TextEmotionBridge 输出
             
         Returns:
             融合后的嵌入 [batch, seq_len, d_model]
@@ -430,15 +401,26 @@ class ContextAwareEmbedding(nn.Module):
         # 1. Token + Position Embedding
         token_emb = self.token_embedding(token_ids, position_ids)
         
-        # 2. 处理情感ID
-        if emotion_id is None:
-            emotion_id = torch.zeros(batch_size, dtype=torch.long, device=device)
-        elif isinstance(emotion_id, int):
-            emotion_id = torch.full(
-                (batch_size,), emotion_id, dtype=torch.long, device=device
-            )
+        # 2. 获取情感向量
+        if emotion_vector is not None:
+            # 直接使用提供的向量 (来自 VADEncoder/TextEmotionBridge)
+            emotion_vec = emotion_vector.to(device)
+            # 确保维度正确
+            if emotion_vec.dim() == 1:
+                emotion_vec = emotion_vec.unsqueeze(0)
+            if emotion_vec.size(0) == 1 and batch_size > 1:
+                emotion_vec = emotion_vec.expand(batch_size, -1)
         else:
-            emotion_id = emotion_id.to(device)
+            # Legacy: 使用 emotion_id 进行嵌入查找
+            if emotion_id is None:
+                emotion_id = torch.zeros(batch_size, dtype=torch.long, device=device)
+            elif isinstance(emotion_id, int):
+                emotion_id = torch.full(
+                    (batch_size,), emotion_id, dtype=torch.long, device=device
+                )
+            else:
+                emotion_id = emotion_id.to(device)
+            emotion_vec = self.emotion_embedding(emotion_id)  # [batch, d_model]
         
         # 3. 处理场景ID
         if scene_id is None:
@@ -449,12 +431,9 @@ class ContextAwareEmbedding(nn.Module):
             )
         else:
             scene_id = scene_id.to(device)
-        
-        # 4. 获取控制向量
-        emotion_vec = self.emotion_embedding(emotion_id)  # [batch, d_model]
         scene_vec = self.scene_embedding(scene_id)        # [batch, d_model]
         
-        # 5. 融合
+        # 4. 融合
         output = self.fusion(token_emb, emotion_vec, scene_vec)
         
         return output

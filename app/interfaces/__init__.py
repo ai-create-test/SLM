@@ -6,6 +6,7 @@ Interfaces Package - 统一接口定义
 
 from .base_module import BaseModule, ModuleOutput, LatentVector, MemoryItem
 from .config import Config, ModelConfig, TrainingConfig, PipelineConfig
+from .config_loader import ConfigLoader, CloudConfig, ExtendedConfig
 from .registry import Registry
 
 __all__ = [

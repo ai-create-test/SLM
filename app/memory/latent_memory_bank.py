@@ -87,6 +87,7 @@ class LatentMemoryBank:
         content: Optional[str] = None,
         importance: float = 1.0,
         metadata: Optional[Dict[str, Any]] = None,
+        node_id: Optional[str] = None,
     ) -> int:
         """
         添加新记忆
@@ -96,6 +97,7 @@ class LatentMemoryBank:
             content: 原始文本内容
             importance: 重要度分数 (0-1)
             metadata: 额外元数据
+            node_id: 可选的 GraphMemory 节点 ID，用于 GraphRAG 检索
             
         Returns:
             新记忆的索引
@@ -118,6 +120,7 @@ class LatentMemoryBank:
         self._metadata.append({
             "content": content,
             "index": idx,
+            "node_id": node_id,  # GraphRAG 支持
             **(metadata or {}),
         })
         
