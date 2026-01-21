@@ -35,7 +35,7 @@ def demo_simple_generate():
     decoder = ParagraphDecoder(d_latent=d_latent, d_model=d_model, vocab_size=50000, max_length=32)
     dynamics = DynamicsModel(d_latent=d_latent, d_model=d_model, num_layers=2, brain_type="gru")
     
-    print("  ✓ Encoder, Decoder, DynamicsModel created")
+    print("  [OK] Encoder, Decoder, DynamicsModel created")
     
     # 编码输入
     print("\n[2] Encoding input text...")
@@ -59,7 +59,7 @@ def demo_simple_generate():
     output_text = dec_output.text[0] if dec_output.text else "(empty)"
     print(f"  Generated: '{output_text}'")
     
-    print("\n[✓] Simple generate completed!")
+    print("\n[DONE] Simple generate completed!")
 
 
 def demo_with_memory():
@@ -79,7 +79,7 @@ def demo_with_memory():
     memory_bank = LatentMemoryBank(d_latent=d_latent, max_size=100)
     memory_fuser = CrossAttentionFuser(d_latent=d_latent)
     
-    print("  ✓ All components created")
+    print("  [OK] All components created")
     
     # 先添加一些记忆
     print("\n[2] Adding memories...")
@@ -129,7 +129,7 @@ def demo_with_memory():
     output_text = dec_output.text[0] if dec_output.text else "(empty)"
     print(f"  Generated: '{output_text}'")
     
-    print("\n[✓] Memory-augmented generate completed!")
+    print("\n[DONE] Memory-augmented generate completed!")
 
 
 def demo_with_emotion():
@@ -152,7 +152,7 @@ def demo_with_emotion():
     from app.brain.modulated_dynamics import ModulatedDynamicsModel
     dynamics = ModulatedDynamicsModel(d_latent=d_latent, d_model=d_model, d_condition=d_emotion, num_layers=2)
     
-    print("  ✓ All components created")
+    print("  [OK] All components created")
     
     # 编码输入
     print("\n[2] Encoding input...")
@@ -184,7 +184,7 @@ def demo_with_emotion():
         output_text = dec_output.text[0] if dec_output.text else "(empty)"
         print(f"    → {emo_name}: '{output_text}'")
     
-    print("\n[✓] Emotion-modulated generate completed!")
+    print("\n[DONE] Emotion-modulated generate completed!")
 
 
 def run_all_demos():

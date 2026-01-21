@@ -1,0 +1,36 @@
+# AMHVQ+ Coding Configuration
+# 代码专用配置
+
+extends: amhvq_base
+
+model:
+  # 更强的结构编码
+  max_chunks: 16
+  matryoshka_dims: [128, 256, 512, 768]
+  rvq_layers: 6
+  
+  # 三通道全开
+  use_three_channel: true
+  
+  # 更敏感的符号锚定
+  symbol_anchor_threshold: 0.3
+  
+  # 结构解析 (AST)
+  structure_parser_type: "ast"
+
+training:
+  # 更早启用结构和符号
+  structure_start_epoch: 2
+  symbol_start_epoch: 3
+  
+  # 更高的精确权重
+  structure_weight: 0.8
+  symbol_weight: 0.8
+
+scene:
+  default_scene: "coding"
+  scenes:
+    coding:
+      semantic_bits: 512
+      structure: true
+      symbols: true

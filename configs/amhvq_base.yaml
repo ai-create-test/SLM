@@ -1,0 +1,88 @@
+# AMHVQ+ Base Configuration
+# 基础配置预设
+
+model:
+  # 模型维度
+  d_model: 768
+  d_latent: 512
+  vocab_size: 50000
+  max_length: 256
+  
+  # 层次编码
+  max_chunks: 8
+  matryoshka_dims: [64, 128, 256, 512]
+  rvq_layers: 4
+  
+  # 三通道
+  use_three_channel: true
+  use_hierarchical: true
+  
+  # 符号锚定
+  symbol_anchor_threshold: 0.5
+  
+  # 结构解析
+  structure_parser_type: "auto"
+
+  # Dynamics
+  use_dynamics: true
+  brain_type: "gru"
+  dynamics_layers: 4
+
+training:
+  # 优化器
+  optimizer: "adamw"
+  lr: 1e-4
+  weight_decay: 0.01
+  
+  # 调度
+  scheduler: "cosine"
+  warmup_steps: 1000
+  
+  # 批次
+  batch_size: 32
+  grad_accumulation_steps: 4
+  
+  # 课程学习
+  curriculum_warmup: 2
+  structure_start_epoch: 3
+  symbol_start_epoch: 5
+  
+  # 损失权重
+  semantic_weight: 1.0
+  structure_weight: 0.5
+  symbol_weight: 0.5
+  vq_weight: 0.25
+
+emotion:
+  d_vad: 3
+  num_emotions: 8
+  emotion_dim: 64
+
+scene:
+  # 场景配置
+  default_scene: "chat"
+  scenes:
+    chat:
+      semantic_bits: 256
+      structure: false
+      symbols: false
+    
+    coding:
+      semantic_bits: 512
+      structure: true
+      symbols: true
+    
+    technical:
+      semantic_bits: 512
+      structure: true
+      symbols: false
+    
+    creative:
+      semantic_bits: 256
+      structure: false
+      symbols: false
+
+memory:
+  d_node: 512
+  max_nodes: 10000
+  similarity_threshold: 0.7

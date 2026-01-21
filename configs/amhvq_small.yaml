@@ -1,0 +1,26 @@
+# AMHVQ+ Small Configuration
+# 小型高效配置
+
+extends: amhvq_base
+
+model:
+  d_model: 512
+  d_latent: 256
+  max_length: 128
+  
+  max_chunks: 4
+  matryoshka_dims: [32, 64, 128, 256]
+  rvq_layers: 2
+  
+  # 纯语义模式
+  use_three_channel: false
+  
+  dynamics_layers: 2
+
+training:
+  batch_size: 64
+  lr: 2e-4
+
+memory:
+  d_node: 256
+  max_nodes: 2000

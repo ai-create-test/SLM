@@ -306,3 +306,189 @@ class GraphMemory:
     
     def __repr__(self) -> str:
         return f"GraphMemory(nodes={self.num_nodes}, edges={self.num_edges})"
+    
+    # ============================================================
+    # AMHVQ+ 结构通道集成
+    # ============================================================
+    
+    def store_structure(
+        self,
+        structure_id: str,
+        nodes: List[Dict[str, Any]],
+        edges: List[Tuple[str, str, str]],
+        summary_vector: Optional[torch.Tensor] = None,
+        structure_type: str = "ast",
+    ) -> List[str]:
+        """
+        存储结构图 (用于 AMHVQ+ 结构通道)
+        
+        Args:
+            structure_id: 结构的唯一标识符
+            nodes: 节点列表 [{"id": str, "type": str, "content": str, "slot_id": int?}, ...]
+            edges: 边列表 [(source, relation, target), ...]
+            summary_vector: 结构摘要向量
+            structure_type: 结构类型 ("ast", "syntax", "custom")
+            
+        Returns:
+            创建的节点 ID 列表
+        """
+        created_node_ids = []
+        
+        # 添加根节点 (结构摘要)
+        root_name = f"structure_{structure_id}"
+        if summary_vector is None:
+            summary_vector = torch.zeros(self.d_node)
+        
+        self.add_node(
+            name=root_name,
+            vector=summary_vector,
+            node_type=f"structure_root_{structure_type}",
+            metadata={
+                "structure_id": structure_id,
+                "structure_type": structure_type,
+                "num_nodes": len(nodes),
+            }
+        )
+        created_node_ids.append(root_name)
+        
+        # 添加结构节点
+        for node_info in nodes:
+            node_name = f"{structure_id}_{node_info['id']}"
+            
+            # 如果没有向量，使用零向量
+            node_vector = node_info.get("vector", torch.zeros(self.d_node))
+            
+            self.add_node(
+                name=node_name,
+                vector=node_vector,
+                node_type=f"structure_{node_info.get('type', 'node')}",
+                metadata={
+                    "structure_id": structure_id,
+                    "original_id": node_info["id"],
+                    "content": node_info.get("content", ""),
+                    "slot_id": node_info.get("slot_id"),
+                    "span": node_info.get("span", (0, 0)),
+                }
+            )
+            created_node_ids.append(node_name)
+            
+            # 连接到根节点
+            self.add_edge(root_name, "contains", node_name)
+        
+        # 添加结构边
+        for source, relation, target in edges:
+            source_name = f"{structure_id}_{source}"
+            target_name = f"{structure_id}_{target}"
+            if source_name in self._nodes and target_name in self._nodes:
+                self.add_edge(source_name, relation, target_name)
+        
+        return created_node_ids
+    
+    def retrieve_skeleton(
+        self,
+        query_vector: torch.Tensor,
+        top_k: int = 1,
+        structure_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        检索结构骨架 (用于 AMHVQ+ 解码时的结构引导)
+        
+        Args:
+            query_vector: 查询向量 (通常是语义向量)
+            top_k: 返回最相似的结构数量
+            structure_type: 可选的结构类型过滤
+            
+        Returns:
+            {
+                "structure_id": str,
+                "nodes": List[Dict],  # 节点信息
+                "slots": List[Dict],  # 槽位信息
+                "skeleton_str": str,   # 骨架字符串表示
+            }
+        """
+        # 找到所有结构根节点
+        root_nodes = []
+        for name, node in self._nodes.items():
+            if node.node_type.startswith("structure_root"):
+                if structure_type is None or structure_type in node.node_type:
+                    root_nodes.append(node)
+        
+        if not root_nodes:
+            return {
+                "structure_id": None,
+                "nodes": [],
+                "slots": [],
+                "skeleton_str": "",
+            }
+        
+        # 计算相似度
+        similarities = []
+        for node in root_nodes:
+            if query_vector.dim() == 1:
+                sim = torch.cosine_similarity(
+                    query_vector.unsqueeze(0),
+                    node.vector.unsqueeze(0)
+                ).item()
+            else:
+                sim = torch.cosine_similarity(
+                    query_vector.mean(dim=0, keepdim=True),
+                    node.vector.unsqueeze(0)
+                ).item()
+            similarities.append((node, sim))
+        
+        # 排序并选择 top-k
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        best_root = similarities[0][0] if similarities else None
+        
+        if best_root is None:
+            return {
+                "structure_id": None,
+                "nodes": [],
+                "slots": [],
+                "skeleton_str": "",
+            }
+        
+        structure_id = best_root.metadata.get("structure_id", "unknown")
+        
+        # 收集该结构的所有节点
+        structure_nodes = []
+        slots = []
+        
+        for name, node in self._nodes.items():
+            if node.metadata.get("structure_id") == structure_id and name != best_root.name:
+                node_info = {
+                    "id": node.metadata.get("original_id", name),
+                    "type": node.node_type.replace("structure_", ""),
+                    "content": node.metadata.get("content", ""),
+                    "slot_id": node.metadata.get("slot_id"),
+                }
+                structure_nodes.append(node_info)
+                
+                if node_info["slot_id"] is not None:
+                    slots.append({
+                        "slot_id": node_info["slot_id"],
+                        "slot_type": node_info["type"],
+                        "content": node_info["content"],
+                    })
+        
+        # 生成骨架字符串
+        skeleton_str = self._generate_skeleton_str(structure_nodes)
+        
+        return {
+            "structure_id": structure_id,
+            "nodes": structure_nodes,
+            "slots": sorted(slots, key=lambda x: x["slot_id"]),
+            "skeleton_str": skeleton_str,
+        }
+    
+    def _generate_skeleton_str(self, nodes: List[Dict]) -> str:
+        """生成骨架字符串表示"""
+        parts = []
+        for node in nodes:
+            if node["slot_id"] is not None:
+                parts.append(f"□{node['slot_id']}")
+            elif node["content"]:
+                parts.append(node["content"][:10])
+            else:
+                parts.append(f"[{node['type']}]")
+        return " ".join(parts[:10])  # 限制长度

@@ -58,6 +58,34 @@ class ModelConfig:
     max_paragraph_len: int = 256     # 最大段落长度
     dropout: float = 0.1             # Dropout 率
     rope_theta: float = 10000.0      # RoPE 基础频率
+    
+    # ============ AMHVQ+ 配置 ============
+    # 层次编码
+    use_hierarchical: bool = False   # 启用分层编码 (AMHVQ)
+    use_three_channel: bool = False  # 启用三通道融合 (AMHVQ+)
+    
+    # Semantic Chunker
+    max_chunks: int = 8              # 最大语义块数
+    min_chunk_len: int = 4           # 最小块长度 (tokens)
+    max_chunk_len: int = 64          # 最大块长度 (tokens)
+    use_semantic_chunking: bool = True  # 使用学习的语义分块
+    
+    # Matryoshka
+    matryoshka_dims: List[int] = field(
+        default_factory=lambda: [64, 128, 256, 512]
+    )  # 嵌套精度维度
+    
+    # Residual VQ
+    rvq_layers: int = 3              # 残差 VQ 层数
+    rvq_codebook_size: int = 4096    # 每层码本大小
+    
+    # Symbol Channel
+    symbol_anchor_threshold: float = 0.5  # 关键 token 检测阈值
+    max_symbol_anchors: int = 32     # 最大锚点数
+    
+    # Structure Channel
+    structure_parser_type: str = "auto"  # 结构解析器类型 (auto/ast/syntax)
+    use_graph_memory_for_structure: bool = True  # 使用 GraphMemory 存储结构
 
 
 @dataclass

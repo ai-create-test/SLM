@@ -391,3 +391,502 @@ class ParagraphEncoder(BaseModule):
             return torch.tensor(0.0)
         
         return output.vq_output.commitment_loss + output.vq_output.codebook_loss
+
+
+# ============================================================
+# AMHVQ+ Hierarchical Encoder
+# ============================================================
+
+from .semantic_chunker import SemanticChunker, pool_chunks
+from .matryoshka import MatryoshkaProjection
+from .residual_vq import ResidualVQ, RVQOutput
+
+
+@dataclass
+class HierarchicalEncoderOutput(ModuleOutput):
+    """分层编码器输出"""
+    hierarchical_latent: "HierarchicalLatent" = None  # 分层潜向量
+    rvq_output: Optional[RVQOutput] = None            # RVQ 输出
+    chunk_info: Optional[dict] = None                 # 分块信息
+
+
+class ChunkEncoder(nn.Module):
+    """
+    块编码器
+    
+    对每个语义块进行 Transformer 编码。
+    """
+    
+    def __init__(
+        self,
+        d_model: int,
+        num_layers: int = 2,
+        num_heads: int = 8,
+        d_ff: int = None,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        
+        d_ff = d_ff or d_model * 4
+        
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=num_heads,
+            dim_feedforward=d_ff,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.norm = nn.LayerNorm(d_model)
+    
+    def forward(
+        self,
+        chunks: torch.Tensor,
+        token_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Args:
+            chunks: [batch, num_chunks, chunk_len, d_model]
+            token_mask: [batch, num_chunks, chunk_len]
+            
+        Returns:
+            encoded: [batch, num_chunks, d_model] (每个 chunk 池化后)
+        """
+        batch_size, num_chunks, chunk_len, d_model = chunks.shape
+        
+        # 展平处理
+        chunks_flat = chunks.reshape(batch_size * num_chunks, chunk_len, d_model)
+        mask_flat = token_mask.reshape(batch_size * num_chunks, chunk_len)
+        
+        # 转换为 key_padding_mask (True = padding)
+        padding_mask = (mask_flat == 0)
+        
+        # Transformer 编码
+        encoded = self.encoder(chunks_flat, src_key_padding_mask=padding_mask)
+        
+        # 池化 (mean over valid tokens)
+        mask_expanded = mask_flat.unsqueeze(-1)
+        pooled = (encoded * mask_expanded).sum(dim=1) / (mask_expanded.sum(dim=1) + 1e-8)
+        pooled = self.norm(pooled)
+        
+        # 恢复形状
+        pooled = pooled.reshape(batch_size, num_chunks, d_model)
+        
+        return pooled
+
+
+class GlobalPooler(nn.Module):
+    """
+    全局池化器
+    
+    从 chunk 表示中提取全局语义。
+    """
+    
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int = 8,
+        num_layers: int = 1,
+    ):
+        super().__init__()
+        
+        # 可学习的全局 query
+        self.global_query = nn.Parameter(torch.randn(1, 1, d_model))
+        
+        self.cross_attns = nn.ModuleList([
+            nn.MultiheadAttention(d_model, num_heads, batch_first=True)
+            for _ in range(num_layers)
+        ])
+        self.norms = nn.ModuleList([
+            nn.LayerNorm(d_model) for _ in range(num_layers)
+        ])
+    
+    def forward(
+        self,
+        chunk_embeds: torch.Tensor,
+        chunk_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Args:
+            chunk_embeds: [batch, num_chunks, d_model]
+            chunk_mask: [batch, num_chunks]
+            
+        Returns:
+            global_embed: [batch, 1, d_model]
+        """
+        batch_size = chunk_embeds.shape[0]
+        query = self.global_query.expand(batch_size, -1, -1)
+        
+        # key_padding_mask: True = padding
+        padding_mask = (chunk_mask == 0)
+        
+        for cross_attn, norm in zip(self.cross_attns, self.norms):
+            attn_out, _ = cross_attn(
+                query, chunk_embeds, chunk_embeds,
+                key_padding_mask=padding_mask
+            )
+            query = norm(query + attn_out)
+        
+        return query  # [batch, 1, d_model]
+
+
+class DetailEncoder(nn.Module):
+    """
+    细节编码器
+    
+    编码 token 级别的残差信息，用于高保真重建。
+    使用较小的维度以节省空间。
+    """
+    
+    def __init__(
+        self,
+        d_model: int,
+        d_detail: int = None,
+        max_detail_tokens: int = 32,
+        dropout: float = 0.1,
+    ):
+        """
+        Args:
+            d_model: 输入维度
+            d_detail: 输出维度 (默认为 d_model // 2)
+            max_detail_tokens: 最大细节 token 数
+            dropout: Dropout 率
+        """
+        super().__init__()
+        
+        self.d_model = d_model
+        self.d_detail = d_detail or d_model // 2
+        self.max_detail_tokens = max_detail_tokens
+        
+        # 细节投影
+        self.proj = nn.Sequential(
+            nn.Linear(d_model, self.d_detail),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(self.d_detail, self.d_detail),
+        )
+        
+        # 重要性评分器 (选择最重要的 token)
+        self.scorer = nn.Sequential(
+            nn.Linear(d_model, d_model // 4),
+            nn.GELU(),
+            nn.Linear(d_model // 4, 1),
+        )
+        
+        self.norm = nn.LayerNorm(self.d_detail)
+    
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        编码细节信息
+        
+        Args:
+            hidden_states: [batch, seq_len, d_model]
+            attention_mask: [batch, seq_len]
+            
+        Returns:
+            detail: [batch, num_detail, d_detail]
+            detail_mask: [batch, num_detail]
+        """
+        batch_size, seq_len, d_model = hidden_states.shape
+        device = hidden_states.device
+        
+        # 计算重要性分数
+        scores = self.scorer(hidden_states).squeeze(-1)  # [batch, seq_len]
+        
+        if attention_mask is not None:
+            # 将 padding 位置的分数设为负无穷
+            scores = scores.masked_fill(attention_mask == 0, float('-inf'))
+        
+        # 选择 top-k 最重要的 token
+        num_select = min(self.max_detail_tokens, seq_len)
+        top_scores, top_indices = torch.topk(scores, num_select, dim=1)
+        
+        # 收集对应的 hidden states
+        batch_indices = torch.arange(batch_size, device=device).unsqueeze(1).expand(-1, num_select)
+        selected_hidden = hidden_states[batch_indices, top_indices]  # [batch, num_select, d_model]
+        
+        # 投影到细节空间
+        detail = self.proj(selected_hidden)
+        detail = self.norm(detail)  # [batch, num_select, d_detail]
+        
+        # 创建 mask (有效的非 padding 位置)
+        if attention_mask is not None:
+            detail_mask = (top_scores > float('-inf')).float()
+        else:
+            detail_mask = torch.ones(batch_size, num_select, device=device)
+        
+        return detail, detail_mask
+
+
+@Registry.register("encoder", "hierarchical")
+class HierarchicalParagraphEncoder(BaseModule):
+    """
+    分层段落编码器 (AMHVQ+)
+    
+    完整流程:
+        Text → BaseLM → SemanticChunker → ChunkEncoder → GlobalPooler
+             → MatryoshkaProjection → ResidualVQ → HierarchicalLatent
+    
+    使用示例:
+        encoder = HierarchicalParagraphEncoder.from_config(config)
+        output = encoder("这是一个测试段落...")
+        latent = output.hierarchical_latent
+        print(latent.num_tokens)  # 自适应 token 数
+    """
+    
+    MODULE_TYPE = "encoder"
+    
+    def __init__(
+        self,
+        d_model: int = 768,
+        d_latent: int = 512,
+        max_chunks: int = 8,
+        min_chunk_len: int = 4,
+        max_chunk_len: int = 64,
+        matryoshka_dims: List[int] = None,
+        rvq_layers: int = 3,
+        rvq_codebook_size: int = 4096,
+        use_semantic_chunking: bool = True,
+        base_model_name: str = "bert-base-uncased",
+        freeze_base: bool = True,
+        dropout: float = 0.1,
+        max_length: int = 256,
+    ):
+        super().__init__()
+        
+        self.d_model = d_model
+        self.d_latent = d_latent
+        
+        # Matryoshka 维度
+        if matryoshka_dims is None:
+            matryoshka_dims = [64, 128, 256, d_latent]
+        self.matryoshka_dims = matryoshka_dims
+        
+        # ========== Tokenizer & Base LM ==========
+        self.tokenizer = get_tokenizer(
+            model_name=base_model_name,
+            max_length=max_length,
+            fallback=True,
+        )
+        self.base_model = get_base_lm(
+            model_name=base_model_name,
+            freeze=freeze_base,
+            fallback=True,
+        )
+        self.max_length = max_length
+        
+        # 维度适配
+        actual_d_model = getattr(self.base_model, 'd_model', d_model)
+        if actual_d_model != d_model:
+            self.model_proj = nn.Linear(actual_d_model, d_model)
+        else:
+            self.model_proj = None
+        
+        # ========== Semantic Chunker ==========
+        self.chunker = SemanticChunker(
+            d_model=d_model,
+            max_chunks=max_chunks,
+            min_chunk_len=min_chunk_len,
+            max_chunk_len=max_chunk_len,
+            use_learned_boundaries=use_semantic_chunking,
+            dropout=dropout,
+        )
+        
+        # ========== Chunk Encoder ==========
+        self.chunk_encoder = ChunkEncoder(
+            d_model=d_model,
+            num_layers=2,
+            dropout=dropout,
+        )
+        
+        # ========== Global Pooler ==========
+        self.global_pooler = GlobalPooler(
+            d_model=d_model,
+            num_layers=1,
+        )
+        
+        # ========== Matryoshka Projection ==========
+        self.matryoshka = MatryoshkaProjection(
+            d_input=d_model,
+            d_output=d_latent,
+            nesting_dims=matryoshka_dims,
+            dropout=dropout,
+        )
+        
+        # ========== Residual VQ ==========
+        self.rvq = ResidualVQ(
+            d_latent=d_latent,
+            codebook_size=rvq_codebook_size,
+            num_layers=rvq_layers,
+        )
+    
+    def forward(
+        self,
+        text: Union[str, List[str], torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        apply_vq: bool = True,
+    ) -> HierarchicalEncoderOutput:
+        """
+        编码段落
+        
+        Args:
+            text: 输入文本
+            attention_mask: 注意力掩码
+            apply_vq: 是否应用向量量化
+            
+        Returns:
+            HierarchicalEncoderOutput
+        """
+        # 1. Tokenize
+        if isinstance(text, str):
+            text = [text]
+        
+        if isinstance(text, list):
+            tokenizer_output = self.tokenizer.encode_batch(text, max_length=self.max_length)
+            token_ids = tokenizer_output.input_ids.to(self.device)
+            if attention_mask is None:
+                attn_mask = tokenizer_output.attention_mask.to(self.device)
+            else:
+                attn_mask = attention_mask
+        else:
+            token_ids = text
+            attn_mask = attention_mask
+        
+        # 2. Base LM encoding
+        lm_output = self.base_model(token_ids, attention_mask=attn_mask)
+        if hasattr(lm_output, 'last_hidden_state'):
+            hidden_states = lm_output.last_hidden_state
+        else:
+            hidden_states = lm_output
+        
+        if self.model_proj is not None:
+            hidden_states = self.model_proj(hidden_states)
+        
+        # 3. Semantic Chunking
+        chunk_output = self.chunker(hidden_states, attn_mask, hard=not self.training)
+        
+        # 4. Chunk Encoding
+        chunk_embeds = self.chunk_encoder(chunk_output.chunks, chunk_output.token_mask)
+        # chunk_embeds: [batch, num_chunks, d_model]
+        
+        # 5. Global Pooling
+        global_embed = self.global_pooler(chunk_embeds, chunk_output.chunk_mask)
+        # global_embed: [batch, 1, d_model]
+        
+        # 6. Matryoshka Projection
+        z_global = self.matryoshka(global_embed)  # [batch, 1, d_latent]
+        z_chunks = self.matryoshka(chunk_embeds)   # [batch, num_chunks, d_latent]
+        
+        # 7. Residual VQ
+        if apply_vq:
+            # 对所有 latent 进行量化
+            all_z = torch.cat([z_global, z_chunks], dim=1)  # [batch, 1+num_chunks, d_latent]
+            rvq_output = self.rvq(all_z)
+            
+            # 分离 global 和 chunks
+            z_global_q = rvq_output.quantized[:, :1, :]
+            z_chunks_q = rvq_output.quantized[:, 1:, :]
+        else:
+            rvq_output = None
+            z_global_q = z_global
+            z_chunks_q = z_chunks
+        
+        # 8. 构建 HierarchicalLatent
+        from ..interfaces.base_module import HierarchicalLatent
+        
+        hierarchical_latent = HierarchicalLatent(
+            global_=z_global_q,
+            chunks=z_chunks_q,
+            detail=None,  # 可选的细节层
+            indices=rvq_output.indices if rvq_output else None,
+            chunk_mask=chunk_output.chunk_mask,
+            metadata={
+                "num_chunks": chunk_output.num_chunks.tolist(),
+                "boundaries": chunk_output.boundaries,
+            }
+        )
+        
+        return HierarchicalEncoderOutput(
+            data=z_global_q.squeeze(1),
+            hierarchical_latent=hierarchical_latent,
+            rvq_output=rvq_output,
+            chunk_info={
+                "num_chunks": chunk_output.num_chunks,
+                "boundaries": chunk_output.boundaries,
+            }
+        )
+    
+    def encode_text(self, text: Union[str, List[str]]) -> "HierarchicalLatent":
+        """便捷方法：直接返回 HierarchicalLatent"""
+        output = self.forward(text)
+        return output.hierarchical_latent
+    
+    def get_loss(self, output: HierarchicalEncoderOutput) -> torch.Tensor:
+        """获取编码器损失 (主要是 RVQ commitment loss)"""
+        if output.rvq_output is None:
+            return torch.tensor(0.0, device=self.device)
+        return output.rvq_output.commitment_loss
+    
+    @classmethod
+    def from_config(cls, config, **kwargs) -> "HierarchicalParagraphEncoder":
+        """从配置创建实例"""
+        return cls(
+            d_model=config.d_model,
+            d_latent=config.d_latent,
+            max_chunks=config.max_chunks,
+            min_chunk_len=config.min_chunk_len,
+            max_chunk_len=config.max_chunk_len,
+            matryoshka_dims=config.matryoshka_dims,
+            rvq_layers=config.rvq_layers,
+            rvq_codebook_size=config.rvq_codebook_size,
+            use_semantic_chunking=config.use_semantic_chunking,
+            dropout=config.dropout,
+            **kwargs,
+        )
+
+
+# ============================================================
+# 工厂方法
+# ============================================================
+
+def create_encoder(
+    config,
+    encoder_type: Optional[str] = None,
+    **kwargs,
+) -> BaseModule:
+    """
+    工厂方法：根据配置选择编码器类型
+    
+    Args:
+        config: ModelConfig
+        encoder_type: 显式指定类型 ("legacy", "hierarchical", "unified")
+                      如果为 None，则根据 config 自动选择
+        **kwargs: 额外参数
+        
+    Returns:
+        编码器实例
+    """
+    # 自动选择类型
+    if encoder_type is None:
+        if hasattr(config, 'use_three_channel') and config.use_three_channel:
+            encoder_type = "unified"
+        elif hasattr(config, 'use_hierarchical') and config.use_hierarchical:
+            encoder_type = "hierarchical"
+        else:
+            encoder_type = "legacy"
+    
+    # 创建实例
+    if encoder_type == "legacy":
+        return ParagraphEncoder.from_config(config, **kwargs)
+    elif encoder_type == "hierarchical":
+        return HierarchicalParagraphEncoder.from_config(config, **kwargs)
+    elif encoder_type == "unified":
+        # UnifiedEncoder 将在 Phase 8 实现
+        # 暂时 fallback 到 hierarchical
+        return HierarchicalParagraphEncoder.from_config(config, **kwargs)
+    else:
+        raise ValueError(f"Unknown encoder type: {encoder_type}")
